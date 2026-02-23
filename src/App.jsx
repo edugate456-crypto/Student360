@@ -30,6 +30,9 @@ import {
 const SCHOOL_ID = "demo-school";
 const SCHOOL_NAME = "Demo School";
 
+/** Deploy badge (for Step-1 auto deploy test) */
+const DEPLOY_BADGE_TEXT = "Deployed on Vercel ✅";
+
 export default function App() {
   // ========= Firebase Auth (Anonymous) =========
   const [fbReady, setFbReady] = useState(false);
@@ -56,7 +59,14 @@ export default function App() {
     return doc(db, "schools", session.schoolId, "students", studentId);
   }
   function notesColRef(studentId) {
-    return collection(db, "schools", session.schoolId, "students", studentId, "notes");
+    return collection(
+      db,
+      "schools",
+      session.schoolId,
+      "students",
+      studentId,
+      "notes"
+    );
   }
 
   // ========= Effects (ALL hooks before any return) =========
@@ -92,7 +102,11 @@ export default function App() {
       try {
         await setDoc(
           schoolDocRef,
-          { schoolId: session.schoolId, name: session.schoolName, updatedAt: serverTimestamp() },
+          {
+            schoolId: session.schoolId,
+            name: session.schoolName,
+            updatedAt: serverTimestamp(),
+          },
           { merge: true }
         );
       } catch (e) {
@@ -144,7 +158,9 @@ export default function App() {
     const sid = normalizeStudentId(studentIdRaw);
     if (!sid) {
       setStudent(null);
-      setStudentLoadError("QR غير صالح. لازم يحتوي StudentID فقط مثل: S-10025 أو 10025");
+      setStudentLoadError(
+        "QR غير صالح. لازم يحتوي StudentID فقط مثل: S-10025 أو 10025"
+      );
       setPage("student");
       return;
     }
@@ -155,7 +171,9 @@ export default function App() {
 
       if (!snap.exists()) {
         setStudent(null);
-        setStudentLoadError(`لم يتم العثور على طالب بهذا الـ ID: ${sid} داخل المدرسة.`);
+        setStudentLoadError(
+          `لم يتم العثور على طالب بهذا الـ ID: ${sid} داخل المدرسة.`
+        );
         setPage("student");
         return;
       }
@@ -173,9 +191,21 @@ export default function App() {
   // ========= Guards =========
   if (!session) return <Login onSignIn={signIn} />;
 
-  if (!fbReady) return <CenterMessage title="Student360" message="جاري تجهيز الاتصال بـ Firebase..." />;
+  if (!fbReady)
+    return (
+      <CenterMessage
+        title="Student360"
+        message="جاري تجهيز الاتصال بـ Firebase..."
+      />
+    );
 
-  if (!fbUser) return <CenterMessage title="Student360" message="لم نتمكن من تسجيل دخول Firebase (Anonymous)." />;
+  if (!fbUser)
+    return (
+      <CenterMessage
+        title="Student360"
+        message="لم نتمكن من تسجيل دخول Firebase (Anonymous)."
+      />
+    );
 
   // ========= Pages =========
   if (page === "dashboard") {
@@ -258,6 +288,8 @@ function Login({ onSignIn }) {
           <div>
             <h1 style={styles.title}>Student360</h1>
             <p style={styles.subtitle}>تسجيل الملاحظات السلوكية بسرعة عبر QR</p>
+            {/* Auto-deploy test badge */}
+            <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
           </div>
         </div>
 
@@ -367,6 +399,8 @@ function Dashboard({ session, onSignOut, onScanQR, onAdminStudents }) {
               <div style={styles.brandSub}>
                 {session.schoolName} — {roleLabel} — {session.name}
               </div>
+              {/* Auto-deploy test badge */}
+              <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
             </div>
           </div>
 
@@ -391,8 +425,10 @@ function Dashboard({ session, onSignOut, onScanQR, onAdminStudents }) {
           <div style={styles.noteBox}>
             <div style={styles.noteTitle}>مهم</div>
             <div style={styles.noteText}>
-              ✅ التخزين أصبح Multi-School جاهز للبيع<br />
-              ✅ الطلاب فريدين بـ StudentID (ممنوع التكرار تلقائيًا)<br />
+              ✅ التخزين أصبح Multi-School جاهز للبيع
+              <br />
+              ✅ الطلاب فريدين بـ StudentID (ممنوع التكرار تلقائيًا)
+              <br />
               ✅ QR Generation داخل البرنامج + Import CSV
             </div>
           </div>
@@ -478,7 +514,11 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
         grade,
         section,
         createdAt: serverTimestamp(),
-        createdBy: { role: session.role, name: session.name, identifier: session.identifier },
+        createdBy: {
+          role: session.role,
+          name: session.name,
+          identifier: session.identifier,
+        },
       });
 
       setMsg(`✅ تم إضافة الطالب. الآن يمكنك توليد QR للـ StudentID: ${sid}`);
@@ -523,7 +563,9 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
         <head><title>Print QR</title></head>
         <body style="font-family:Arial; text-align:center; padding:30px;">
           <h2 style="margin:0 0 8px;">${escapeHtml(qrFor.name || "")}</h2>
-          <div style="margin-bottom:10px; font-weight:bold;">StudentID: ${escapeHtml(qrFor.studentId)}</div>
+          <div style="margin-bottom:10px; font-weight:bold;">StudentID: ${escapeHtml(
+            qrFor.studentId
+          )}</div>
           <img src="${qrDataUrl}" style="width:260px; height:260px;" />
           <div style="margin-top:14px; color:#555;">Student360</div>
           <script>window.onload = () => window.print();</script>
@@ -543,7 +585,9 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
 
       const cleaned = rows
         .map((r) => ({
-          studentId: normalizeStudentId(r.studentId || r.StudentID || r.id || r.ID),
+          studentId: normalizeStudentId(
+            r.studentId || r.StudentID || r.id || r.ID
+          ),
           name: (r.name || r.Name || "").trim(),
           grade: (r.grade || r.Grade || "الصف الأول ابتدائي").trim(),
           section: (r.section || r.Section || "أ").trim(),
@@ -551,7 +595,9 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
         .filter((x) => x.studentId && x.name);
 
       if (cleaned.length === 0) {
-        return setMsg("ملف CSV لا يحتوي بيانات صحيحة. لازم أعمدة: studentId,name,grade,section");
+        return setMsg(
+          "ملف CSV لا يحتوي بيانات صحيحة. لازم أعمدة: studentId,name,grade,section"
+        );
       }
 
       const batch = writeBatch(db);
@@ -566,14 +612,24 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
             grade: s.grade,
             section: s.section,
             createdAt: serverTimestamp(),
-            createdBy: { role: session.role, name: session.name, identifier: session.identifier, via: "csv" },
+            createdBy: {
+              role: session.role,
+              name: session.name,
+              identifier: session.identifier,
+              via: "csv",
+            },
           },
           { merge: false }
         );
       });
 
       await batch.commit();
-      setMsg(`✅ تم استيراد ${Math.min(cleaned.length, 200)} طالب. (الحد 200 دفعة واحدة للتجربة)`);
+      setMsg(
+        `✅ تم استيراد ${Math.min(
+          cleaned.length,
+          200
+        )} طالب. (الحد 200 دفعة واحدة للتجربة)`
+      );
       await loadLatest();
     } catch (e) {
       console.error(e);
@@ -590,12 +646,18 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
             <div>
               <div style={styles.brandTitle}>إدارة الطلاب</div>
               <div style={styles.brandSub}>{session.schoolName} — مدير</div>
+              {/* Auto-deploy test badge */}
+              <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button style={styles.ghostBtn} onClick={onBack}>رجوع للوحة</button>
-            <button style={styles.ghostBtn} onClick={onGoScanner}>مسح QR</button>
+            <button style={styles.ghostBtn} onClick={onBack}>
+              رجوع للوحة
+            </button>
+            <button style={styles.ghostBtn} onClick={onGoScanner}>
+              مسح QR
+            </button>
           </div>
         </header>
 
@@ -627,7 +689,11 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
 
               <label style={styles.label}>
                 الصف
-                <select style={styles.select} value={grade} onChange={(e) => setGrade(e.target.value)}>
+                <select
+                  style={styles.select}
+                  value={grade}
+                  onChange={(e) => setGrade(e.target.value)}
+                >
                   <option>الصف الأول ابتدائي</option>
                   <option>الصف الثاني ابتدائي</option>
                   <option>الصف الثالث ابتدائي</option>
@@ -645,8 +711,15 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
 
               <label style={styles.label}>
                 الشعبة
-                <select style={styles.select} value={section} onChange={(e) => setSection(e.target.value)}>
-                  <option>أ</option><option>ب</option><option>ج</option><option>د</option>
+                <select
+                  style={styles.select}
+                  value={section}
+                  onChange={(e) => setSection(e.target.value)}
+                >
+                  <option>أ</option>
+                  <option>ب</option>
+                  <option>ج</option>
+                  <option>د</option>
                 </select>
               </label>
 
@@ -662,14 +735,24 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
 
               <label style={{ ...styles.label, marginTop: 10 }}>
                 استيراد CSV
-                <input type="file" accept=".csv,text/csv" onChange={(e) => importCSV(e.target.files?.[0])} />
-                <div style={styles.miniHint}>الأعمدة المطلوبة: studentId,name,grade,section</div>
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(e) => importCSV(e.target.files?.[0])}
+                />
+                <div style={styles.miniHint}>
+                  الأعمدة المطلوبة: studentId,name,grade,section
+                </div>
               </label>
             </div>
 
             <div style={styles.panel}>
               <div style={styles.panelTitle}>قائمة الطلاب (آخر 20)</div>
-              <button style={styles.secondaryBtn} onClick={loadLatest} disabled={loadingLatest}>
+              <button
+                style={styles.secondaryBtn}
+                onClick={loadLatest}
+                disabled={loadingLatest}
+              >
                 {loadingLatest ? "تحميل..." : "تحديث القائمة"}
               </button>
 
@@ -682,12 +765,25 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
                       <div>
                         <div style={{ fontWeight: 900 }}>{s.name}</div>
                         <div style={styles.miniHint}>
-                          StudentID: <b>{s.studentId}</b> — {s.grade} — شعبة {s.section}
+                          StudentID: <b>{s.studentId}</b> — {s.grade} — شعبة{" "}
+                          {s.section}
                         </div>
                       </div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                        }}
+                      >
                         <span style={styles.tag}>{s.studentId}</span>
-                        <button style={styles.secondaryBtn} onClick={() => openQR(s)}>توليد QR</button>
+                        <button
+                          style={styles.secondaryBtn}
+                          onClick={() => openQR(s)}
+                        >
+                          توليد QR
+                        </button>
                       </div>
                     </div>
                   ))
@@ -695,25 +791,62 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
               </div>
 
               {qrOpen ? (
-                <div style={styles.modalOverlay} onClick={() => setQrOpen(false)}>
-                  <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                <div
+                  style={styles.modalOverlay}
+                  onClick={() => setQrOpen(false)}
+                >
+                  <div
+                    style={styles.modal}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        alignItems: "center",
+                      }}
+                    >
                       <div style={{ fontWeight: 900 }}>QR للطالب</div>
-                      <button style={styles.ghostBtn} onClick={() => setQrOpen(false)}>إغلاق</button>
+                      <button
+                        style={styles.ghostBtn}
+                        onClick={() => setQrOpen(false)}
+                      >
+                        إغلاق
+                      </button>
                     </div>
 
-                    <div style={{ marginTop: 10, fontWeight: 900 }}>{qrFor?.name}</div>
-                    <div style={styles.miniHint}>StudentID: {qrFor?.studentId}</div>
+                    <div style={{ marginTop: 10, fontWeight: 900 }}>
+                      {qrFor?.name}
+                    </div>
+                    <div style={styles.miniHint}>
+                      StudentID: {qrFor?.studentId}
+                    </div>
 
                     {qrDataUrl ? (
                       <div style={{ textAlign: "center", marginTop: 12 }}>
-                        <img src={qrDataUrl} alt="QR" style={{ width: 260, height: 260 }} />
+                        <img
+                          src={qrDataUrl}
+                          alt="QR"
+                          style={{ width: 260, height: 260 }}
+                        />
                       </div>
                     ) : null}
 
-                    <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-                      <button style={styles.primaryBtn} onClick={downloadQR}>تحميل PNG</button>
-                      <button style={styles.secondaryBtn} onClick={printQR}>طباعة</button>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 10,
+                        marginTop: 12,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <button style={styles.primaryBtn} onClick={downloadQR}>
+                        تحميل PNG
+                      </button>
+                      <button style={styles.secondaryBtn} onClick={printQR}>
+                        طباعة
+                      </button>
                     </div>
 
                     <div style={styles.note}>QR محتواه StudentID فقط لسرعة المسح.</div>
@@ -800,9 +933,17 @@ function QRScanner({ sessionId, onGoDashboard, onScan }) {
           <div>
             <div style={styles.h2}>مسح QR</div>
             <div style={styles.sub2}>QR يحتوي StudentID فقط (مثل S-10025)</div>
+            {/* Auto-deploy test badge */}
+            <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
           </div>
 
-          <button style={styles.ghostBtn} onClick={() => { stopScanner(); onGoDashboard(); }}>
+          <button
+            style={styles.ghostBtn}
+            onClick={() => {
+              stopScanner();
+              onGoDashboard();
+            }}
+          >
             رجوع للوحة
           </button>
         </div>
@@ -814,11 +955,23 @@ function QRScanner({ sessionId, onGoDashboard, onScan }) {
         {error ? <div style={styles.errorBox}>{error}</div> : null}
 
         <div style={styles.actionsRow}>
-          <button style={styles.primaryBtn} onClick={startCameraAndScan} disabled={status === "scanning" || status === "starting"}>
+          <button
+            style={styles.primaryBtn}
+            onClick={startCameraAndScan}
+            disabled={status === "scanning" || status === "starting"}
+          >
             {status === "scanning" ? "✅ الكاميرا تعمل… امسح الكود" : "تشغيل الكاميرا"}
           </button>
 
-          <button style={styles.secondaryBtn} onClick={() => { stopScanner(); didScanRef.current = false; setStatus("idle"); setError(""); }}>
+          <button
+            style={styles.secondaryBtn}
+            onClick={() => {
+              stopScanner();
+              didScanRef.current = false;
+              setStatus("idle");
+              setError("");
+            }}
+          >
             إيقاف/إعادة
           </button>
         </div>
@@ -892,7 +1045,8 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
     }
   }
 
-  const canWriteNotes = session.role === "teacher" || session.role === "counselor" || session.role === "admin";
+  const canWriteNotes =
+    session.role === "teacher" || session.role === "counselor" || session.role === "admin";
 
   return (
     <div style={styles.page}>
@@ -905,12 +1059,18 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
               <div style={styles.brandSub}>
                 {session.schoolName} — {ROLE_LABELS[session.role]} — {session.name}
               </div>
+              {/* Auto-deploy test badge */}
+              <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button style={styles.ghostBtn} onClick={onGoDashboard}>رجوع للوحة</button>
-            <button style={styles.ghostBtn} onClick={onRescan}>مسح QR</button>
+            <button style={styles.ghostBtn} onClick={onGoDashboard}>
+              رجوع للوحة
+            </button>
+            <button style={styles.ghostBtn} onClick={onRescan}>
+              مسح QR
+            </button>
           </div>
         </header>
 
@@ -921,11 +1081,33 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
             <div style={styles.twoCols}>
               <div style={styles.panel}>
                 <div style={styles.panelTitle}>بيانات الطالب</div>
-                <div style={styles.kv}><div style={styles.k}><b>StudentID:</b></div><div style={styles.v}>{student.studentId}</div></div>
-                <div style={styles.kv}><div style={styles.k}><b>الاسم:</b></div><div style={styles.v}>{student.name}</div></div>
-                <div style={styles.kv}><div style={styles.k}><b>الصف:</b></div><div style={styles.v}>{student.grade}</div></div>
-                <div style={styles.kv}><div style={styles.k}><b>الشعبة:</b></div><div style={styles.v}>{student.section}</div></div>
-                <div style={styles.note}>✅ QR محتواه: <b>{student.studentId}</b></div>
+                <div style={styles.kv}>
+                  <div style={styles.k}>
+                    <b>StudentID:</b>
+                  </div>
+                  <div style={styles.v}>{student.studentId}</div>
+                </div>
+                <div style={styles.kv}>
+                  <div style={styles.k}>
+                    <b>الاسم:</b>
+                  </div>
+                  <div style={styles.v}>{student.name}</div>
+                </div>
+                <div style={styles.kv}>
+                  <div style={styles.k}>
+                    <b>الصف:</b>
+                  </div>
+                  <div style={styles.v}>{student.grade}</div>
+                </div>
+                <div style={styles.kv}>
+                  <div style={styles.k}>
+                    <b>الشعبة:</b>
+                  </div>
+                  <div style={styles.v}>{student.section}</div>
+                </div>
+                <div style={styles.note}>
+                  ✅ QR محتواه: <b>{student.studentId}</b>
+                </div>
               </div>
 
               <div style={styles.panel}>
@@ -937,13 +1119,21 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
                   <>
                     <div style={styles.actionsRow}>
                       <button
-                        style={{ ...styles.secondaryBtn, borderColor: noteType === "positive" ? "#0b5cff" : "#dbe3ef", fontWeight: 900 }}
+                        style={{
+                          ...styles.secondaryBtn,
+                          borderColor: noteType === "positive" ? "#0b5cff" : "#dbe3ef",
+                          fontWeight: 900,
+                        }}
                         onClick={() => setNoteType("positive")}
                       >
                         ✅ إيجابي
                       </button>
                       <button
-                        style={{ ...styles.secondaryBtn, borderColor: noteType === "negative" ? "#0b5cff" : "#dbe3ef", fontWeight: 900 }}
+                        style={{
+                          ...styles.secondaryBtn,
+                          borderColor: noteType === "negative" ? "#0b5cff" : "#dbe3ef",
+                          fontWeight: 900,
+                        }}
                         onClick={() => setNoteType("negative")}
                       >
                         ❌ سلبي
@@ -953,24 +1143,46 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
                     <div style={styles.twoMiniCols}>
                       <label style={styles.label}>
                         المكان
-                        <select style={styles.select} value={location} onChange={(e) => setLocation(e.target.value)}>
-                          <option>الفصل</option><option>الملعب</option><option>الممر</option><option>المسجد</option>
-                          <option>المكتبة</option><option>المقصف</option><option>البوابة</option>
+                        <select
+                          style={styles.select}
+                          value={location}
+                          onChange={(e) => setLocation(e.target.value)}
+                        >
+                          <option>الفصل</option>
+                          <option>الملعب</option>
+                          <option>الممر</option>
+                          <option>المسجد</option>
+                          <option>المكتبة</option>
+                          <option>المقصف</option>
+                          <option>البوابة</option>
                         </select>
                       </label>
 
                       <label style={styles.label}>
                         التصنيف
-                        <select style={styles.select} value={category} onChange={(e) => setCategory(e.target.value)}>
-                          <option>سلوك</option><option>تأخير</option><option>انضباط</option><option>تعاون</option>
-                          <option>مخالفة</option><option>اجتهاد</option>
+                        <select
+                          style={styles.select}
+                          value={category}
+                          onChange={(e) => setCategory(e.target.value)}
+                        >
+                          <option>سلوك</option>
+                          <option>تأخير</option>
+                          <option>انضباط</option>
+                          <option>تعاون</option>
+                          <option>مخالفة</option>
+                          <option>اجتهاد</option>
                         </select>
                       </label>
                     </div>
 
                     <label style={styles.label}>
                       الملاحظة
-                      <textarea style={styles.textarea} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="اكتب تفاصيل الملاحظة..." />
+                      <textarea
+                        style={styles.textarea}
+                        value={comment}
+                        onChange={(e) => setComment(e.target.value)}
+                        placeholder="اكتب تفاصيل الملاحظة..."
+                      />
                     </label>
 
                     {msg ? <div style={styles.infoBox}>{msg}</div> : null}
@@ -991,11 +1203,17 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
                     notes.map((n) => (
                       <div key={n.id} style={styles.noteItem}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                          <div style={{ fontWeight: 900 }}>{n.type === "positive" ? "✅ إيجابي" : "❌ سلبي"} — {n.category}</div>
+                          <div style={{ fontWeight: 900 }}>
+                            {n.type === "positive" ? "✅ إيجابي" : "❌ سلبي"} — {n.category}
+                          </div>
                           <div style={styles.tag}>{n.location}</div>
                         </div>
-                        <div style={{ marginTop: 6, color: "#1f2a37", lineHeight: 1.6 }}>{n.comment}</div>
-                        <div style={styles.miniHint}>بواسطة: {n.createdBy?.name || "—"} ({ROLE_LABELS[n.createdBy?.role] || "—"})</div>
+                        <div style={{ marginTop: 6, color: "#1f2a37", lineHeight: 1.6 }}>
+                          {n.comment}
+                        </div>
+                        <div style={styles.miniHint}>
+                          بواسطة: {n.createdBy?.name || "—"} ({ROLE_LABELS[n.createdBy?.role] || "—"})
+                        </div>
                       </div>
                     ))
                   )}
@@ -1006,7 +1224,8 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
             <div style={styles.panel}>
               <div style={styles.panelTitle}>لا يوجد طالب معروض</div>
               <div style={styles.note}>
-                اضغط “مسح QR” وامسح كود يحتوي StudentID فقط.<br />
+                اضغط “مسح QR” وامسح كود يحتوي StudentID فقط.
+                <br />
                 لو الطالب غير موجود: ادخل بحساب المدير → إدارة الطلاب → أضفه.
               </div>
             </div>
@@ -1022,7 +1241,8 @@ function normalizeStudentId(raw) {
   const t = String(raw || "").trim();
   if (!t) return "";
   const cleaned = t.replace(/\s+/g, "");
-  if (cleaned.startsWith("{") || cleaned.startsWith("http") || cleaned.includes("://")) return "";
+  if (cleaned.startsWith("{") || cleaned.startsWith("http") || cleaned.includes("://"))
+    return "";
   const s = cleaned.toUpperCase();
   const m = s.match(/^S-?\d+$/) || s.match(/^\d+$/);
   if (!m) return "";
@@ -1032,7 +1252,8 @@ function normalizeStudentId(raw) {
 function humanizeCameraError(e) {
   const name = e?.name || "";
   const msg = String(e?.message || e || "");
-  if (name === "NotAllowedError" || /denied/i.test(msg)) return "تم رفض إذن الكاميرا. اسمح بالكاميرا ثم جرّب.";
+  if (name === "NotAllowedError" || /denied/i.test(msg))
+    return "تم رفض إذن الكاميرا. اسمح بالكاميرا ثم جرّب.";
   if (name === "NotFoundError") return "لا توجد كاميرا متاحة على هذا الجهاز.";
   if (name === "NotReadableError") return "الكاميرا مستخدمة في تطبيق آخر. اقفله ثم جرّب.";
   return `تعذّر تشغيل الكاميرا. (${name || "Error"}) ${msg}`;
@@ -1047,6 +1268,8 @@ function CenterMessage({ title, message }) {
           <div>
             <div style={{ fontWeight: 900, fontSize: 20 }}>{title}</div>
             <div style={{ color: "#6b7280", marginTop: 6 }}>{message}</div>
+            {/* Auto-deploy test badge */}
+            <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
           </div>
         </div>
       </div>
@@ -1055,11 +1278,25 @@ function CenterMessage({ title, message }) {
 }
 
 function escapeHtml(s) {
-  return String(s || "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+  return String(s || "").replace(
+    /[&<>"']/g,
+    (m) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[m])
+  );
 }
 
 function parseCSV(text) {
-  const lines = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").filter(Boolean);
+  const lines = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .filter(Boolean);
   if (lines.length === 0) return [];
   const headers = splitCSVLine(lines[0]).map((h) => h.trim());
   const rows = [];
@@ -1119,14 +1356,59 @@ const styles = {
     justifyContent: "center",
     padding: 18,
     fontFamily: "Arial",
-    background: "radial-gradient(1200px 500px at 50% -20%, #e9f2ff 0%, #ffffff 55%, #f7f9fc 100%)",
+    background:
+      "radial-gradient(1200px 500px at 50% -20%, #e9f2ff 0%, #ffffff 55%, #f7f9fc 100%)",
   },
-  card: { width: "100%", maxWidth: 560, background: "#fff", border: "1px solid #eef2f7", borderRadius: 18, boxShadow: "0 10px 30px rgba(0,0,0,0.06)", padding: 18 },
-  cardWide: { width: "100%", maxWidth: 760, background: "#fff", border: "1px solid #eef2f7", borderRadius: 18, boxShadow: "0 10px 30px rgba(0,0,0,0.06)", padding: 18 },
+  card: {
+    width: "100%",
+    maxWidth: 560,
+    background: "#fff",
+    border: "1px solid #eef2f7",
+    borderRadius: 18,
+    boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
+    padding: 18,
+  },
+  cardWide: {
+    width: "100%",
+    maxWidth: 760,
+    background: "#fff",
+    border: "1px solid #eef2f7",
+    borderRadius: 18,
+    boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
+    padding: 18,
+  },
   brandRow: { display: "flex", gap: 12, alignItems: "center", marginBottom: 14 },
-  logo: { width: 52, height: 52, borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", background: "#0b5cff", color: "#fff", fontWeight: 900, letterSpacing: 0.5 },
+  logo: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#0b5cff",
+    color: "#fff",
+    fontWeight: 900,
+    letterSpacing: 0.5,
+  },
   title: { margin: 0, fontSize: 22, fontWeight: 900 },
   subtitle: { margin: "6px 0 0", color: "#5b677a", fontSize: 13 },
+
+  /** Auto-deploy badge style */
+  deployBadge: {
+    marginTop: 8,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 10px",
+    borderRadius: 999,
+    border: "1px solid #dbe9ff",
+    background: "#eef5ff",
+    color: "#0b5cff",
+    fontSize: 12,
+    fontWeight: 900,
+    width: "fit-content",
+  },
+
   form: { display: "flex", flexDirection: "column", gap: 12, marginTop: 10 },
   label: { display: "flex", flexDirection: "column", gap: 6, fontSize: 13 },
   miniHint: { color: "#6b7280", fontSize: 12 },
