@@ -2,7 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import QRCode from "qrcode";
 import { auth, db } from "./firebase";
-import { onAuthStateChanged, signInAnonymously } from "firebase/auth";
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+} from "firebase/auth";
 import {
   addDoc,
   collection,
@@ -19,27 +23,31 @@ import {
 
 /**
  * Student360 (Commercial-ready MVP - Firebase)
- * Fix: Hooks order issue (NEVER put hooks after conditional returns)
  *
  * Storage:
  *   schools/{schoolId}
  *   schools/{schoolId}/students/{studentId}
  *   schools/{schoolId}/students/{studentId}/notes/{noteId}
+ *
+ * AUTH (FIXED):
+ * - Removed Anonymous auth entirely.
+ * - Real sign-in via Email/Password.
+ * - Role is loaded from Firestore: /users/{uid} => { role, email }
  */
 
 const SCHOOL_ID = "demo-school";
 const SCHOOL_NAME = "Demo School";
 
-/** Deploy badge (for Step-1 auto deploy test) */
+/** Deploy badge */
 const DEPLOY_BADGE_TEXT = "Deployed on Vercel ✅";
 
 export default function App() {
-  // ========= Firebase Auth (Anonymous) =========
+  // ========= Firebase Auth =========
   const [fbReady, setFbReady] = useState(false);
   const [fbUser, setFbUser] = useState(null);
 
-  // ========= Session (Login UI) =========
-  const [session, setSession] = useState(null);
+  // ========= Session (from Firebase + Firestore role doc) =========
+  const [session, setSession] = useState(null); // { role, name, identifier, schoolId, schoolName, uid }
 
   // ========= App Pages =========
   const [page, setPage] = useState("dashboard"); // dashboard | scanner | student | admin_students
@@ -70,34 +78,78 @@ export default function App() {
   }
 
   // ========= Effects (ALL hooks before any return) =========
+
+  // Auth state listener
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
-      try {
-        if (!u) {
-          await signInAnonymously(auth);
-          return;
-        }
-        setFbUser(u);
-        setFbReady(true);
-      } catch (e) {
-        console.error(e);
-        setFbReady(true);
-      }
+      setFbUser(u || null);
+      setFbReady(true);
     });
     return () => unsub();
   }, []);
 
+  // Load role/session from Firestore when authenticated
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("student360_session");
-      if (raw) setSession(JSON.parse(raw));
-    } catch {}
-  }, []);
+    if (!fbReady) return;
 
-  // Ensure school doc exists (only when session exists and firebase ready)
+    // Logged out
+    if (!fbUser) {
+      setSession(null);
+      return;
+    }
+
+    // Logged in: fetch /users/{uid}
+    (async () => {
+      try {
+        const roleRef = doc(db, "users", fbUser.uid);
+        const snap = await getDoc(roleRef);
+
+        if (!snap.exists()) {
+          // User exists in Auth but has no role doc
+          // This will happen if /users/{uid} was not created.
+          setSession({
+            uid: fbUser.uid,
+            role: "unknown",
+            name: "مستخدم",
+            identifier: fbUser.email || fbUser.uid,
+            schoolId: SCHOOL_ID,
+            schoolName: SCHOOL_NAME,
+          });
+          return;
+        }
+
+        const data = snap.data() || {};
+        const role = data.role || "unknown";
+        const email = data.email || fbUser.email || fbUser.uid;
+
+        setSession({
+          uid: fbUser.uid,
+          role,
+          name: ROLE_DEFAULT_NAMES[role] || "مستخدم",
+          identifier: email,
+          schoolId: SCHOOL_ID,
+          schoolName: SCHOOL_NAME,
+        });
+      } catch (e) {
+        console.error(e);
+        setSession({
+          uid: fbUser.uid,
+          role: "unknown",
+          name: "مستخدم",
+          identifier: fbUser.email || fbUser.uid,
+          schoolId: SCHOOL_ID,
+          schoolName: SCHOOL_NAME,
+        });
+      }
+    })();
+  }, [fbReady, fbUser]);
+
+  // Ensure school doc exists (Admin only)
   useEffect(() => {
     if (!session) return;
     if (!fbReady) return;
+    if (session.role !== "admin") return;
+
     (async () => {
       try {
         await setDoc(
@@ -116,19 +168,18 @@ export default function App() {
   }, [session, fbReady, schoolDocRef]);
 
   // ========= Navigation helpers =========
-  function signIn(nextSession) {
-    const withSchool = {
-      ...nextSession,
-      schoolId: SCHOOL_ID,
-      schoolName: SCHOOL_NAME,
-    };
-    setSession(withSchool);
-    localStorage.setItem("student360_session", JSON.stringify(withSchool));
-  }
-
-  function signOut() {
-    setSession(null);
-    localStorage.removeItem("student360_session");
+  async function signOut() {
+    try {
+      await firebaseSignOut(auth);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      // session will be cleared by onAuthStateChanged
+      scanSessionRef.current += 1;
+      setStudent(null);
+      setStudentLoadError("");
+      setPage("dashboard");
+    }
   }
 
   function goDashboard() {
@@ -189,33 +240,51 @@ export default function App() {
   }
 
   // ========= Guards =========
-  if (!session) return <Login onSignIn={signIn} />;
 
-  if (!fbReady)
+  // Not ready yet
+  if (!fbReady) {
     return (
       <CenterMessage
         title="Student360"
         message="جاري تجهيز الاتصال بـ Firebase..."
       />
     );
+  }
 
-  if (!fbUser)
+  // Logged out -> show real login
+  if (!fbUser) {
+    return <Login />;
+  }
+
+  // Logged in but session still loading
+  if (!session) {
     return (
       <CenterMessage
         title="Student360"
-        message="لم نتمكن من تسجيل دخول Firebase (Anonymous)."
+        message="جاري تحميل صلاحيات الحساب (Role) من Firestore..."
       />
     );
+  }
+
+  // If role doc missing / unknown
+  if (session.role === "unknown") {
+    return (
+      <CenterMessage
+        title="Student360"
+        message={
+          "تم تسجيل الدخول بنجاح، لكن لم يتم العثور على Role لهذا المستخدم في Firestore.\n" +
+          "تأكد أن لديك Document داخل /users/{UID} يحتوي على الحقل role."
+        }
+      />
+    );
+  }
 
   // ========= Pages =========
   if (page === "dashboard") {
     return (
       <Dashboard
         session={session}
-        onSignOut={() => {
-          goDashboard();
-          signOut();
-        }}
+        onSignOut={signOut}
         onScanQR={goScanner}
         onAdminStudents={goAdminStudents}
       />
@@ -255,29 +324,44 @@ export default function App() {
   );
 }
 
-/* ===================== LOGIN ===================== */
-function Login({ onSignIn }) {
-  const [role, setRole] = useState("teacher");
+/* ===================== LOGIN (REAL FIREBASE) ===================== */
+function Login() {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const roleLabel = useMemo(() => ROLE_LABELS[role], [role]);
+  function mapAuthError(err) {
+    const code = String(err?.code || "");
+    if (code.includes("auth/invalid-credential")) return "بيانات الدخول غير صحيحة.";
+    if (code.includes("auth/wrong-password")) return "كلمة المرور غير صحيحة.";
+    if (code.includes("auth/user-not-found")) return "المستخدم غير موجود.";
+    if (code.includes("auth/invalid-email")) return "البريد الإلكتروني غير صحيح.";
+    if (code.includes("auth/too-many-requests"))
+      return "محاولات كثيرة. انتظر قليلًا ثم جرّب.";
+    if (code.includes("auth/admin-restricted-operation"))
+      return "عملية مرفوضة. (تأكد أن هذا تسجيل دخول وليس إنشاء مستخدم).";
+    return "تعذر تسجيل الدخول. راجع Console للتفاصيل.";
+  }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     setError("");
 
-    const id = identifier.trim();
-    if (!id) return setError("فضلاً اكتب البريد الإلكتروني أو رقم الجوال.");
+    const email = identifier.trim();
+    if (!email) return setError("فضلاً اكتب البريد الإلكتروني.");
     if (!password) return setError("فضلاً اكتب كلمة المرور.");
 
-    const demo = DEMO_USERS[role];
-    if (id !== demo.identifier || password !== demo.password) {
-      return setError("بيانات الدخول غير صحيحة (جرّب بيانات الديمو بالأسفل).");
+    setBusy(true);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      // session is set by App via onAuthStateChanged + role doc
+    } catch (err) {
+      console.error(err);
+      setError(mapAuthError(err));
+    } finally {
+      setBusy(false);
     }
-
-    onSignIn({ role, name: demo.name, identifier: demo.identifier });
   }
 
   return (
@@ -288,35 +372,16 @@ function Login({ onSignIn }) {
           <div>
             <h1 style={styles.title}>Student360</h1>
             <p style={styles.subtitle}>تسجيل الملاحظات السلوكية بسرعة عبر QR</p>
-            {/* Auto-deploy test badge */}
             <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
           </div>
         </div>
 
         <form style={styles.form} onSubmit={handleSubmit}>
           <label style={styles.label}>
-            نوع الحساب
-            <select
-              value={role}
-              onChange={(e) => {
-                setRole(e.target.value);
-                setError("");
-              }}
-              style={styles.select}
-            >
-              <option value="teacher">معلم</option>
-              <option value="admin">مدير</option>
-              <option value="counselor">توجيه طلابي</option>
-              <option value="parent">ولي أمر</option>
-            </select>
-            <div style={styles.miniHint}>الدور الحالي: {roleLabel}</div>
-          </label>
-
-          <label style={styles.label}>
-            البريد الإلكتروني / رقم الجوال
+            البريد الإلكتروني
             <input
               style={styles.input}
-              placeholder="teacher@demo.sa"
+              placeholder="admin@demo.sa"
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
             />
@@ -327,7 +392,7 @@ function Login({ onSignIn }) {
             <input
               style={styles.input}
               type="password"
-              placeholder="1234"
+              placeholder="123456"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
@@ -335,22 +400,40 @@ function Login({ onSignIn }) {
 
           {error ? <div style={styles.errorBox}>{error}</div> : null}
 
-          <button style={styles.button} type="submit">
-            تسجيل الدخول
+          <button style={styles.button} type="submit" disabled={busy}>
+            {busy ? "جاري تسجيل الدخول..." : "تسجيل الدخول"}
           </button>
 
           <div style={styles.demoBox}>
             <div style={styles.demoTitle}>بيانات ديمو للاختبار السريع</div>
             <div style={styles.demoRow}>
-              <span style={styles.badge}>{roleLabel}</span>
+              <span style={styles.badge}>admin</span>
               <span style={styles.demoText}>
-                المستخدم: <b>{DEMO_USERS[role].identifier}</b>
+                المستخدم: <b>admin@demo.sa</b>
+              </span>
+            </div>
+            <div style={styles.demoRow}>
+              <span style={styles.badge}>teacher</span>
+              <span style={styles.demoText}>
+                المستخدم: <b>teacher@demo.sa</b>
+              </span>
+            </div>
+            <div style={styles.demoRow}>
+              <span style={styles.badge}>counselor</span>
+              <span style={styles.demoText}>
+                المستخدم: <b>counselor@demo.sa</b>
+              </span>
+            </div>
+            <div style={styles.demoRow}>
+              <span style={styles.badge}>parent</span>
+              <span style={styles.demoText}>
+                المستخدم: <b>parent@demo.sa</b>
               </span>
             </div>
             <div style={styles.demoRow}>
               <span style={styles.badge}>كلمة المرور</span>
               <span style={styles.demoText}>
-                <b>{DEMO_USERS[role].password}</b>
+                <b>123456</b>
               </span>
             </div>
           </div>
@@ -399,7 +482,6 @@ function Dashboard({ session, onSignOut, onScanQR, onAdminStudents }) {
               <div style={styles.brandSub}>
                 {session.schoolName} — {roleLabel} — {session.name}
               </div>
-              {/* Auto-deploy test badge */}
               <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
             </div>
           </div>
@@ -494,6 +576,11 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
 
   async function createStudent() {
     setMsg("");
+
+    if (session.role !== "admin") {
+      return setMsg("صلاحيات غير كافية. إضافة الطلاب للمدير فقط.");
+    }
+
     const sid = normalizeStudentId(studentId);
     if (!sid) return setMsg("اكتب StudentID صحيح (مثال: S-10025 أو 10025).");
     if (!fullName.trim()) return setMsg("اكتب اسم الطالب.");
@@ -579,6 +666,10 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
     setMsg("");
     if (!file) return;
 
+    if (session.role !== "admin") {
+      return setMsg("صلاحيات غير كافية. الاستيراد للمدير فقط.");
+    }
+
     try {
       const text = await file.text();
       const rows = parseCSV(text);
@@ -645,8 +736,9 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
             <div style={styles.logoSm}>S360</div>
             <div>
               <div style={styles.brandTitle}>إدارة الطلاب</div>
-              <div style={styles.brandSub}>{session.schoolName} — مدير</div>
-              {/* Auto-deploy test badge */}
+              <div style={styles.brandSub}>
+                {session.schoolName} — {ROLE_LABELS[session.role] || session.role}
+              </div>
               <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
             </div>
           </div>
@@ -725,7 +817,11 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
 
               {msg ? <div style={styles.infoBox}>{msg}</div> : null}
 
-              <button style={styles.button} onClick={createStudent} disabled={saving}>
+              <button
+                style={styles.button}
+                onClick={createStudent}
+                disabled={saving}
+              >
                 {saving ? "جاري الحفظ..." : "إضافة الطالب"}
               </button>
 
@@ -849,7 +945,9 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
                       </button>
                     </div>
 
-                    <div style={styles.note}>QR محتواه StudentID فقط لسرعة المسح.</div>
+                    <div style={styles.note}>
+                      QR محتواه StudentID فقط لسرعة المسح.
+                    </div>
                   </div>
                 </div>
               ) : null}
@@ -933,7 +1031,6 @@ function QRScanner({ sessionId, onGoDashboard, onScan }) {
           <div>
             <div style={styles.h2}>مسح QR</div>
             <div style={styles.sub2}>QR يحتوي StudentID فقط (مثل S-10025)</div>
-            {/* Auto-deploy test badge */}
             <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
           </div>
 
@@ -949,7 +1046,13 @@ function QRScanner({ sessionId, onGoDashboard, onScan }) {
         </div>
 
         <div style={styles.videoWrap}>
-          <video ref={videoRef} style={styles.video} autoPlay muted playsInline />
+          <video
+            ref={videoRef}
+            style={styles.video}
+            autoPlay
+            muted
+            playsInline
+          />
         </div>
 
         {error ? <div style={styles.errorBox}>{error}</div> : null}
@@ -960,7 +1063,9 @@ function QRScanner({ sessionId, onGoDashboard, onScan }) {
             onClick={startCameraAndScan}
             disabled={status === "scanning" || status === "starting"}
           >
-            {status === "scanning" ? "✅ الكاميرا تعمل… امسح الكود" : "تشغيل الكاميرا"}
+            {status === "scanning"
+              ? "✅ الكاميرا تعمل… امسح الكود"
+              : "تشغيل الكاميرا"}
           </button>
 
           <button
@@ -976,14 +1081,23 @@ function QRScanner({ sessionId, onGoDashboard, onScan }) {
           </button>
         </div>
 
-        <div style={styles.note}>iPhone: وافق على إذن الكاميرا ثم اضغط “تشغيل الكاميرا”.</div>
+        <div style={styles.note}>
+          iPhone: وافق على إذن الكاميرا ثم اضغط “تشغيل الكاميرا”.
+        </div>
       </div>
     </div>
   );
 }
 
 /* ===================== STUDENT PAGE + NOTES ===================== */
-function StudentPage({ session, student, error, onGoDashboard, onRescan, notesColRef }) {
+function StudentPage({
+  session,
+  student,
+  error,
+  onGoDashboard,
+  onRescan,
+  notesColRef,
+}) {
   const [noteType, setNoteType] = useState("positive");
   const [location, setLocation] = useState("الفصل");
   const [category, setCategory] = useState("سلوك");
@@ -998,7 +1112,11 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
   async function loadNotes(studentId) {
     setLoadingNotes(true);
     try {
-      const q = query(notesColRef(studentId), orderBy("createdAt", "desc"), limit(30));
+      const q = query(
+        notesColRef(studentId),
+        orderBy("createdAt", "desc"),
+        limit(30)
+      );
       const snap = await getDocs(q);
       setNotes(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
@@ -1031,7 +1149,11 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
         category,
         comment: comment.trim(),
         createdAt: serverTimestamp(),
-        createdBy: { role: session.role, name: session.name, identifier: session.identifier },
+        createdBy: {
+          role: session.role,
+          name: session.name,
+          identifier: session.identifier,
+        },
       });
 
       setComment("");
@@ -1046,7 +1168,9 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
   }
 
   const canWriteNotes =
-    session.role === "teacher" || session.role === "counselor" || session.role === "admin";
+    session.role === "teacher" ||
+    session.role === "counselor" ||
+    session.role === "admin";
 
   return (
     <div style={styles.page}>
@@ -1059,7 +1183,6 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
               <div style={styles.brandSub}>
                 {session.schoolName} — {ROLE_LABELS[session.role]} — {session.name}
               </div>
-              {/* Auto-deploy test badge */}
               <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
             </div>
           </div>
@@ -1114,14 +1237,17 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
                 <div style={styles.panelTitle}>تسجيل ملاحظة</div>
 
                 {!canWriteNotes ? (
-                  <div style={styles.infoBox}>هذا الدور لا يضيف ملاحظات حالياً.</div>
+                  <div style={styles.infoBox}>
+                    هذا الدور لا يضيف ملاحظات حالياً.
+                  </div>
                 ) : (
                   <>
                     <div style={styles.actionsRow}>
                       <button
                         style={{
                           ...styles.secondaryBtn,
-                          borderColor: noteType === "positive" ? "#0b5cff" : "#dbe3ef",
+                          borderColor:
+                            noteType === "positive" ? "#0b5cff" : "#dbe3ef",
                           fontWeight: 900,
                         }}
                         onClick={() => setNoteType("positive")}
@@ -1131,7 +1257,8 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
                       <button
                         style={{
                           ...styles.secondaryBtn,
-                          borderColor: noteType === "negative" ? "#0b5cff" : "#dbe3ef",
+                          borderColor:
+                            noteType === "negative" ? "#0b5cff" : "#dbe3ef",
                           fontWeight: 900,
                         }}
                         onClick={() => setNoteType("negative")}
@@ -1187,14 +1314,20 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
 
                     {msg ? <div style={styles.infoBox}>{msg}</div> : null}
 
-                    <button style={styles.button} onClick={saveNote} disabled={saving}>
+                    <button
+                      style={styles.button}
+                      onClick={saveNote}
+                      disabled={saving}
+                    >
                       {saving ? "جاري الحفظ..." : "حفظ الملاحظة"}
                     </button>
                   </>
                 )}
 
                 <div style={{ marginTop: 14 }}>
-                  <div style={{ fontWeight: 900, marginBottom: 8 }}>آخر الملاحظات</div>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>
+                    آخر الملاحظات
+                  </div>
                   {loadingNotes ? (
                     <div style={styles.miniHint}>تحميل...</div>
                   ) : notes.length === 0 ? (
@@ -1202,17 +1335,31 @@ function StudentPage({ session, student, error, onGoDashboard, onRescan, notesCo
                   ) : (
                     notes.map((n) => (
                       <div key={n.id} style={styles.noteItem}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 10,
+                          }}
+                        >
                           <div style={{ fontWeight: 900 }}>
-                            {n.type === "positive" ? "✅ إيجابي" : "❌ سلبي"} — {n.category}
+                            {n.type === "positive" ? "✅ إيجابي" : "❌ سلبي"} —{" "}
+                            {n.category}
                           </div>
                           <div style={styles.tag}>{n.location}</div>
                         </div>
-                        <div style={{ marginTop: 6, color: "#1f2a37", lineHeight: 1.6 }}>
+                        <div
+                          style={{
+                            marginTop: 6,
+                            color: "#1f2a37",
+                            lineHeight: 1.6,
+                          }}
+                        >
                           {n.comment}
                         </div>
                         <div style={styles.miniHint}>
-                          بواسطة: {n.createdBy?.name || "—"} ({ROLE_LABELS[n.createdBy?.role] || "—"})
+                          بواسطة: {n.createdBy?.name || "—"} (
+                          {ROLE_LABELS[n.createdBy?.role] || "—"})
                         </div>
                       </div>
                     ))
@@ -1241,7 +1388,11 @@ function normalizeStudentId(raw) {
   const t = String(raw || "").trim();
   if (!t) return "";
   const cleaned = t.replace(/\s+/g, "");
-  if (cleaned.startsWith("{") || cleaned.startsWith("http") || cleaned.includes("://"))
+  if (
+    cleaned.startsWith("{") ||
+    cleaned.startsWith("http") ||
+    cleaned.includes("://")
+  )
     return "";
   const s = cleaned.toUpperCase();
   const m = s.match(/^S-?\d+$/) || s.match(/^\d+$/);
@@ -1255,7 +1406,8 @@ function humanizeCameraError(e) {
   if (name === "NotAllowedError" || /denied/i.test(msg))
     return "تم رفض إذن الكاميرا. اسمح بالكاميرا ثم جرّب.";
   if (name === "NotFoundError") return "لا توجد كاميرا متاحة على هذا الجهاز.";
-  if (name === "NotReadableError") return "الكاميرا مستخدمة في تطبيق آخر. اقفله ثم جرّب.";
+  if (name === "NotReadableError")
+    return "الكاميرا مستخدمة في تطبيق آخر. اقفله ثم جرّب.";
   return `تعذّر تشغيل الكاميرا. (${name || "Error"}) ${msg}`;
 }
 
@@ -1267,8 +1419,9 @@ function CenterMessage({ title, message }) {
           <div style={styles.logo}>S360</div>
           <div>
             <div style={{ fontWeight: 900, fontSize: 20 }}>{title}</div>
-            <div style={{ color: "#6b7280", marginTop: 6 }}>{message}</div>
-            {/* Auto-deploy test badge */}
+            <div style={{ color: "#6b7280", marginTop: 6, whiteSpace: "pre-line" }}>
+              {message}
+            </div>
             <div style={styles.deployBadge}>{DEPLOY_BADGE_TEXT}</div>
           </div>
         </div>
@@ -1331,20 +1484,49 @@ function splitCSVLine(line) {
 }
 
 /* ===================== DATA ===================== */
-const ROLE_LABELS = { teacher: "المعلم", admin: "المدير", counselor: "التوجيه الطلابي", parent: "ولي الأمر" };
+const ROLE_LABELS = {
+  teacher: "المعلم",
+  admin: "المدير",
+  counselor: "التوجيه الطلابي",
+  parent: "ولي الأمر",
+};
 
-const DEMO_USERS = {
-  teacher: { name: "أ/ أحمد", identifier: "teacher@demo.sa", password: "1234" },
-  admin: { name: "أ/ مدير المدرسة", identifier: "admin@demo.sa", password: "1234" },
-  counselor: { name: "أ/ توجيه طلابي", identifier: "counselor@demo.sa", password: "1234" },
-  parent: { name: "ولي أمر", identifier: "parent@demo.sa", password: "1234" },
+const ROLE_DEFAULT_NAMES = {
+  admin: "أ/ مدير المدرسة",
+  teacher: "أ/ أحمد",
+  counselor: "أ/ توجيه طلابي",
+  parent: "ولي أمر",
 };
 
 const ROLE_CARDS = {
-  teacher: [{ key: "scan", title: "مسح QR", desc: "امسح كود الطالب لفتح صفحته وتسجيل ملاحظة.", cta: "ابدأ المسح", action: null }],
+  teacher: [
+    {
+      key: "scan",
+      title: "مسح QR",
+      desc: "امسح كود الطالب لفتح صفحته وتسجيل ملاحظة.",
+      cta: "ابدأ المسح",
+      action: null,
+    },
+  ],
   admin: [],
-  counselor: [{ key: "scan", title: "مسح QR", desc: "امسح كود الطالب لفتح صفحته وتسجيل متابعة.", cta: "ابدأ المسح", action: null }],
-  parent: [{ key: "children", title: "أبنائي (قريبًا)", desc: "ربط الأبناء وعرض السجل.", cta: "قريبًا", action: null }],
+  counselor: [
+    {
+      key: "scan",
+      title: "مسح QR",
+      desc: "امسح كود الطالب لفتح صفحته وتسجيل متابعة.",
+      cta: "ابدأ المسح",
+      action: null,
+    },
+  ],
+  parent: [
+    {
+      key: "children",
+      title: "أبنائي (قريبًا)",
+      desc: "ربط الأبناء وعرض السجل.",
+      cta: "قريبًا",
+      action: null,
+    },
+  ],
 };
 
 /* ===================== STYLES ===================== */
@@ -1393,7 +1575,6 @@ const styles = {
   title: { margin: 0, fontSize: 22, fontWeight: 900 },
   subtitle: { margin: "6px 0 0", color: "#5b677a", fontSize: 13 },
 
-  /** Auto-deploy badge style */
   deployBadge: {
     marginTop: 8,
     display: "inline-flex",
@@ -1412,52 +1593,279 @@ const styles = {
   form: { display: "flex", flexDirection: "column", gap: 12, marginTop: 10 },
   label: { display: "flex", flexDirection: "column", gap: 6, fontSize: 13 },
   miniHint: { color: "#6b7280", fontSize: 12 },
-  input: { height: 44, borderRadius: 12, border: "1px solid #dbe3ef", padding: "0 12px", fontSize: 14, outline: "none" },
-  textarea: { minHeight: 90, borderRadius: 12, border: "1px solid #dbe3ef", padding: 12, fontSize: 14, outline: "none", resize: "vertical" },
-  select: { height: 44, borderRadius: 12, border: "1px solid #dbe3ef", padding: "0 12px", fontSize: 14, outline: "none", background: "#fff" },
-  button: { height: 44, borderRadius: 12, border: "none", background: "#0b5cff", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", marginTop: 4 },
-  secondaryBtn: { height: 44, borderRadius: 12, border: "1px solid #dbe3ef", background: "#fff", fontWeight: 900, cursor: "pointer", padding: "0 14px", width: "fit-content" },
-  primaryBtn: { height: 44, borderRadius: 12, border: "none", background: "#0b5cff", color: "#fff", fontWeight: 900, cursor: "pointer", padding: "0 14px", width: "fit-content" },
-  errorBox: { border: "1px solid #ffd6d6", background: "#fff5f5", color: "#b42318", borderRadius: 12, padding: "10px 12px", fontSize: 13, lineHeight: 1.6 },
-  infoBox: { border: "1px solid #dbe9ff", background: "#f5f9ff", color: "#0b5cff", borderRadius: 12, padding: "10px 12px", fontSize: 13, lineHeight: 1.6, marginTop: 8 },
-  demoBox: { marginTop: 2, border: "1px dashed #dbe3ef", background: "#fbfdff", borderRadius: 14, padding: 12 },
+  input: {
+    height: 44,
+    borderRadius: 12,
+    border: "1px solid #dbe3ef",
+    padding: "0 12px",
+    fontSize: 14,
+    outline: "none",
+  },
+  textarea: {
+    minHeight: 90,
+    borderRadius: 12,
+    border: "1px solid #dbe3ef",
+    padding: 12,
+    fontSize: 14,
+    outline: "none",
+    resize: "vertical",
+  },
+  select: {
+    height: 44,
+    borderRadius: 12,
+    border: "1px solid #dbe3ef",
+    padding: "0 12px",
+    fontSize: 14,
+    outline: "none",
+    background: "#fff",
+  },
+  button: {
+    height: 44,
+    borderRadius: 12,
+    border: "none",
+    background: "#0b5cff",
+    color: "#fff",
+    fontWeight: 800,
+    fontSize: 14,
+    cursor: "pointer",
+    marginTop: 4,
+  },
+  secondaryBtn: {
+    height: 44,
+    borderRadius: 12,
+    border: "1px solid #dbe3ef",
+    background: "#fff",
+    fontWeight: 900,
+    cursor: "pointer",
+    padding: "0 14px",
+    width: "fit-content",
+  },
+  primaryBtn: {
+    height: 44,
+    borderRadius: 12,
+    border: "none",
+    background: "#0b5cff",
+    color: "#fff",
+    fontWeight: 900,
+    cursor: "pointer",
+    padding: "0 14px",
+    width: "fit-content",
+  },
+  errorBox: {
+    border: "1px solid #ffd6d6",
+    background: "#fff5f5",
+    color: "#b42318",
+    borderRadius: 12,
+    padding: "10px 12px",
+    fontSize: 13,
+    lineHeight: 1.6,
+  },
+  infoBox: {
+    border: "1px solid #dbe9ff",
+    background: "#f5f9ff",
+    color: "#0b5cff",
+    borderRadius: 12,
+    padding: "10px 12px",
+    fontSize: 13,
+    lineHeight: 1.6,
+    marginTop: 8,
+  },
+  demoBox: {
+    marginTop: 2,
+    border: "1px dashed #dbe3ef",
+    background: "#fbfdff",
+    borderRadius: 14,
+    padding: 12,
+  },
   demoTitle: { fontWeight: 900, marginBottom: 8, fontSize: 13 },
   demoRow: { display: "flex", gap: 10, alignItems: "center", marginTop: 6 },
-  badge: { fontSize: 11, fontWeight: 900, background: "#eef5ff", color: "#0b5cff", borderRadius: 999, padding: "4px 10px", border: "1px solid #dbe9ff", minWidth: 92, textAlign: "center" },
+  badge: {
+    fontSize: 11,
+    fontWeight: 900,
+    background: "#eef5ff",
+    color: "#0b5cff",
+    borderRadius: 999,
+    padding: "4px 10px",
+    border: "1px solid #dbe9ff",
+    minWidth: 92,
+    textAlign: "center",
+  },
   demoText: { fontSize: 13, color: "#1f2a37" },
-  shell: { width: "min(1100px, 100%)", background: "#ffffff", border: "1px solid #eef2f7", borderRadius: 18, boxShadow: "0 10px 30px rgba(0,0,0,0.06)", overflow: "hidden" },
-  topbar: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px", borderBottom: "1px solid #eef2f7", gap: 10, flexWrap: "wrap" },
+  shell: {
+    width: "min(1100px, 100%)",
+    background: "#ffffff",
+    border: "1px solid #eef2f7",
+    borderRadius: 18,
+    boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
+    overflow: "hidden",
+  },
+  topbar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "16px 18px",
+    borderBottom: "1px solid #eef2f7",
+    gap: 10,
+    flexWrap: "wrap",
+  },
   brand: { display: "flex", gap: 12, alignItems: "center" },
-  logoSm: { width: 44, height: 44, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", background: "#0b5cff", color: "#fff", fontWeight: 900, letterSpacing: 0.5 },
+  logoSm: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#0b5cff",
+    color: "#fff",
+    fontWeight: 900,
+    letterSpacing: 0.5,
+  },
   brandTitle: { fontWeight: 900, fontSize: 16 },
   brandSub: { color: "#6b7280", fontSize: 12, marginTop: 2 },
-  ghostBtn: { height: 40, padding: "0 12px", borderRadius: 12, border: "1px solid #dbe3ef", background: "#fff", cursor: "pointer", fontWeight: 800, whiteSpace: "nowrap" },
+  ghostBtn: {
+    height: 40,
+    padding: "0 12px",
+    borderRadius: 12,
+    border: "1px solid #dbe3ef",
+    background: "#fff",
+    cursor: "pointer",
+    fontWeight: 800,
+    whiteSpace: "nowrap",
+  },
   main: { padding: 18 },
-  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 },
-  cardBox: { border: "1px solid #eef2f7", borderRadius: 16, padding: 14, background: "#fff" },
+  grid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: 12,
+  },
+  cardBox: {
+    border: "1px solid #eef2f7",
+    borderRadius: 16,
+    padding: 14,
+    background: "#fff",
+  },
   cardTitle: { fontWeight: 900, marginBottom: 6 },
-  cardDesc: { color: "#6b7280", fontSize: 13, lineHeight: 1.6, minHeight: 44 },
-  cardBtn: { marginTop: 10, height: 40, borderRadius: 12, border: "none", background: "#0b5cff", color: "#fff", fontWeight: 900, cursor: "pointer", width: "100%" },
-  noteBox: { marginTop: 14, border: "1px dashed #dbe3ef", borderRadius: 16, padding: 14, background: "#fbfdff" },
+  cardDesc: {
+    color: "#6b7280",
+    fontSize: 13,
+    lineHeight: 1.6,
+    minHeight: 44,
+  },
+  cardBtn: {
+    marginTop: 10,
+    height: 40,
+    borderRadius: 12,
+    border: "none",
+    background: "#0b5cff",
+    color: "#fff",
+    fontWeight: 900,
+    cursor: "pointer",
+    width: "100%",
+  },
+  noteBox: {
+    marginTop: 14,
+    border: "1px dashed #dbe3ef",
+    borderRadius: 16,
+    padding: 14,
+    background: "#fbfdff",
+  },
   noteTitle: { fontWeight: 900, marginBottom: 6 },
   noteText: { color: "#5b677a", fontSize: 13, lineHeight: 1.7 },
   note: { marginTop: 12, color: "#6b7280", fontSize: 12, lineHeight: 1.7 },
-  topRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 12, flexWrap: "wrap" },
+  topRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 12,
+    flexWrap: "wrap",
+  },
   h2: { fontWeight: 900, fontSize: 18 },
   sub2: { color: "#5b677a", fontSize: 13, marginTop: 4 },
-  videoWrap: { border: "1px solid #eef2f7", borderRadius: 16, overflow: "hidden", background: "#000", marginTop: 10 },
+  videoWrap: {
+    border: "1px solid #eef2f7",
+    borderRadius: 16,
+    overflow: "hidden",
+    background: "#000",
+    marginTop: 10,
+  },
   video: { width: "100%", height: "auto", display: "block" },
   actionsRow: { display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" },
-  twoCols: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, alignItems: "start" },
-  twoMiniCols: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "start" },
-  panel: { border: "1px solid #eef2f7", borderRadius: 16, padding: 14, background: "#fff" },
+  twoCols: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+    gap: 12,
+    alignItems: "start",
+  },
+  twoMiniCols: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 10,
+    alignItems: "start",
+  },
+  panel: {
+    border: "1px solid #eef2f7",
+    borderRadius: 16,
+    padding: 14,
+    background: "#fff",
+  },
   panelTitle: { fontWeight: 900, marginBottom: 10 },
-  kv: { display: "flex", justifyContent: "space-between", gap: 10, border: "1px solid #eef2f7", borderRadius: 12, padding: "10px 12px", marginTop: 10, alignItems: "center" },
+  kv: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 10,
+    border: "1px solid #eef2f7",
+    borderRadius: 12,
+    padding: "10px 12px",
+    marginTop: 10,
+    alignItems: "center",
+  },
   k: { color: "#1f2a37" },
   v: { color: "#111827", fontWeight: 900, textAlign: "right" },
-  tag: { fontSize: 11, fontWeight: 900, background: "#eef5ff", color: "#0b5cff", borderRadius: 999, padding: "4px 10px", border: "1px solid #dbe9ff", whiteSpace: "nowrap" },
-  studentRow: { display: "flex", justifyContent: "space-between", gap: 10, padding: "10px 12px", border: "1px solid #eef2f7", borderRadius: 14, marginTop: 10, alignItems: "center" },
-  noteItem: { border: "1px solid #eef2f7", borderRadius: 14, padding: "10px 12px", marginTop: 10, background: "#fff" },
-  modalOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 999 },
-  modal: { width: "min(520px, 100%)", background: "#fff", borderRadius: 18, border: "1px solid #eef2f7", padding: 16, boxShadow: "0 15px 40px rgba(0,0,0,0.18)" },
+  tag: {
+    fontSize: 11,
+    fontWeight: 900,
+    background: "#eef5ff",
+    color: "#0b5cff",
+    borderRadius: 999,
+    padding: "4px 10px",
+    border: "1px solid #dbe9ff",
+    whiteSpace: "nowrap",
+  },
+  studentRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 10,
+    padding: "10px 12px",
+    border: "1px solid #eef2f7",
+    borderRadius: 14,
+    marginTop: 10,
+    alignItems: "center",
+  },
+  noteItem: {
+    border: "1px solid #eef2f7",
+    borderRadius: 14,
+    padding: "10px 12px",
+    marginTop: 10,
+    background: "#fff",
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.35)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 18,
+    zIndex: 999,
+  },
+  modal: {
+    width: "min(520px, 100%)",
+    background: "#fff",
+    borderRadius: 18,
+    border: "1px solid #eef2f7",
+    padding: 16,
+    boxShadow: "0 15px 40px rgba(0,0,0,0.18)",
+  },
 };
