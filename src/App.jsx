@@ -29,8 +29,7 @@ import {
  *   schools/{schoolId}/students/{studentId}
  *   schools/{schoolId}/students/{studentId}/notes/{noteId}
  *
- * AUTH (FIXED):
- * - Removed Anonymous auth entirely.
+ * AUTH:
  * - Real sign-in via Email/Password.
  * - Role is loaded from Firestore: /users/{uid} => { role, email }
  */
@@ -77,9 +76,7 @@ export default function App() {
     );
   }
 
-  // ========= Effects (ALL hooks before any return) =========
-
-  // Auth state listener
+  // ========= Effects =========
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setFbUser(u || null);
@@ -88,7 +85,6 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // Load role/session from Firestore when authenticated
   useEffect(() => {
     if (!fbReady) return;
 
@@ -105,8 +101,6 @@ export default function App() {
         const snap = await getDoc(roleRef);
 
         if (!snap.exists()) {
-          // User exists in Auth but has no role doc
-          // This will happen if /users/{uid} was not created.
           setSession({
             uid: fbUser.uid,
             role: "unknown",
@@ -174,7 +168,6 @@ export default function App() {
     } catch (e) {
       console.error(e);
     } finally {
-      // session will be cleared by onAuthStateChanged
       scanSessionRef.current += 1;
       setStudent(null);
       setStudentLoadError("");
@@ -240,8 +233,6 @@ export default function App() {
   }
 
   // ========= Guards =========
-
-  // Not ready yet
   if (!fbReady) {
     return (
       <CenterMessage
@@ -251,12 +242,10 @@ export default function App() {
     );
   }
 
-  // Logged out -> show real login
   if (!fbUser) {
     return <Login />;
   }
 
-  // Logged in but session still loading
   if (!session) {
     return (
       <CenterMessage
@@ -266,7 +255,6 @@ export default function App() {
     );
   }
 
-  // If role doc missing / unknown
   if (session.role === "unknown") {
     return (
       <CenterMessage
@@ -355,7 +343,6 @@ function Login() {
     setBusy(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      // session is set by App via onAuthStateChanged + role doc
     } catch (err) {
       console.error(err);
       setError(mapAuthError(err));
@@ -449,6 +436,7 @@ function Dashboard({ session, onSignOut, onScanQR, onAdminStudents }) {
 
   const cards = useMemo(() => {
     const base = ROLE_CARDS[session.role] ?? [];
+
     if (session.role === "admin") {
       return [
         {
@@ -462,13 +450,20 @@ function Dashboard({ session, onSignOut, onScanQR, onAdminStudents }) {
           key: "scan",
           title: "مسح QR (اختياري)",
           desc: "لو المدير احتاج يمسح QR بنفسه.",
-          cta: "فتح",
+          cta: "ابدأ المسح",
           action: onScanQR,
         },
         ...base,
       ];
     }
-    return base;
+
+    // ✅ FIX HERE:
+    // If any role has a card with key "scan" and action is missing,
+    // wire it to onScanQR so it doesn't show "قريبًا"
+    return base.map((c) => {
+      if (c.key === "scan" && !c.action) return { ...c, action: onScanQR };
+      return c;
+    });
   }, [session.role, onAdminStudents, onScanQR]);
 
   return (
@@ -544,9 +539,8 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
   const [latest, setLatest] = useState([]);
   const [loadingLatest, setLoadingLatest] = useState(false);
 
-  // QR modal
   const [qrOpen, setQrOpen] = useState(false);
-  const [qrFor, setQrFor] = useState(null); // {studentId,name}
+  const [qrFor, setQrFor] = useState(null);
   const [qrDataUrl, setQrDataUrl] = useState("");
 
   async function loadLatest() {
@@ -622,7 +616,7 @@ function AdminStudents({ session, onBack, onGoScanner, studentDocRef }) {
 
   async function openQR(s) {
     try {
-      const text = s.studentId; // QR content = studentId only
+      const text = s.studentId;
       const url = await QRCode.toDataURL(text, { margin: 2, scale: 8 });
       setQrFor({ studentId: s.studentId, name: s.name });
       setQrDataUrl(url);
@@ -1505,7 +1499,7 @@ const ROLE_CARDS = {
       title: "مسح QR",
       desc: "امسح كود الطالب لفتح صفحته وتسجيل ملاحظة.",
       cta: "ابدأ المسح",
-      action: null,
+      action: null, // ✅ will be wired to onScanQR automatically now
     },
   ],
   admin: [],
@@ -1515,7 +1509,7 @@ const ROLE_CARDS = {
       title: "مسح QR",
       desc: "امسح كود الطالب لفتح صفحته وتسجيل متابعة.",
       cta: "ابدأ المسح",
-      action: null,
+      action: null, // ✅ will be wired to onScanQR automatically now
     },
   ],
   parent: [
